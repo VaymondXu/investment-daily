@@ -1,0 +1,39 @@
+name: 投资日报
+
+on:
+  # 每天北京时间 09:00 自动触发（UTC+8 → UTC 01:00）
+  schedule:
+    - cron: "0 1 * * *"
+
+  # 手动触发（GitHub Actions 页面点 "Run workflow"）
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "手动触发原因（可选）"
+        required: false
+        default: "手动触发"
+
+jobs:
+  generate-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate & push daily report
+        env:
+          DEEPSEEK_API_KEY:  ${{ secrets.DEEPSEEK_API_KEY }}
+          TAVILY_API_KEY:    ${{ secrets.TAVILY_API_KEY }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+        run: python daily_report.py
