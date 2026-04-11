@@ -2,3 +2,4 @@ openai>=1.30.0
 yfinance>=0.2.40
 tavily-python>=0.3.0
 requests>=2.31.0
+python-dotenv>=1.0.0
