@@ -54,7 +54,7 @@ BLACKLIST_TAGS = {
 # 投资相关性筛选由 LLM 完成（filter_and_translate_polymarket），不再使用白名单
 
 # Polymarket 中文标题最大字符数（LLM 翻译目标 ≤18，此处兜底硬上限）
-MAX_QUESTION_LEN_ZH = 22
+MAX_QUESTION_LEN_ZH = 14
 # 英文回退截断长度
 MAX_QUESTION_LEN_EN = 24
 
@@ -248,7 +248,7 @@ def filter_and_translate_polymarket(items: list[dict], top_n: int = 6) -> list[d
 
 **第二步：翻译**
 将选中事件的标题翻译并精简为中文：
-- 目标长度 ≤18 个中文字符（含标点）
+- 必须完整表达事件含义，同时尽量精简（去掉"是否会""将达到多少"等冗余措辞，如"WTI原油4月破120美元？"）
 - 必须保留核心实体：人名、组织名、数字阈值、日期、选项方向
 - 多选项事件（含"—"分隔子选项）必须保留子选项信息
 
@@ -287,7 +287,7 @@ selected 数组长度不超过 {top_n}，按投资相关性从高到低排列。
             continue
         it = items[idx]
         if zh:
-            it["question_zh"] = zh[:MAX_QUESTION_LEN_ZH]
+            it["question_zh"] = zh
         else:
             en = it["question_en"]
             it["question_zh"] = en if len(en) <= MAX_QUESTION_LEN_EN else en[:MAX_QUESTION_LEN_EN] + "…"
@@ -544,7 +544,7 @@ _HEADING_EMOJI = {
     "四、AI 综合":    "🧠",
 }
 
-_POLY_HEADER  = "**📋 事件 · YES概率 · 24h变化 · 24h成交量**"
+_POLY_HEADER  = "**📋 事件 · YES · 24h变化 · 成交量**"
 _ASSET_HEADER = "**📋 资产 · 最新价 · 涨跌幅 · 驱动因素**"
 
 
@@ -556,6 +556,20 @@ def format_for_feishu(md: str) -> str:
     本地保存的 .md 文件不经过此函数，仍保留原始表格格式。
     """
 
+    def _abbr_volume(vol: str) -> str:
+        """$1,071,311 → $107万, $438,463 → $44万, $22,530 → $2.3万"""
+        raw = vol.replace("$", "").replace(",", "").strip()
+        try:
+            v = float(raw)
+        except Exception:
+            return vol
+        if v >= 1_000_000:
+            return f"${v/10000:.0f}万"
+        elif v >= 10_000:
+            return f"${v/10000:.1f}万".replace(".0万", "万")
+        else:
+            return f"${v:,.0f}"
+
     def _chg_icon(chg: str) -> str:
         s = chg.strip()
         if s.startswith("+"):
@@ -566,7 +580,8 @@ def format_for_feishu(md: str) -> str:
 
     def _fmt_polymarket(cells: list[str]) -> str:
         event, yes, chg, vol = cells[0], cells[1], cells[2], cells[3]
-        return f"- 🎯 **{event}**\n  YES `{yes}` · {_chg_icon(chg)} `{chg}` · 💰 `{vol}`"
+        vol_short = _abbr_volume(vol)
+        return f"🎯 {event}\nYES `{yes}` · {_chg_icon(chg)} `{chg}` · 💰{vol_short}"
 
     def _fmt_asset(cells: list[str]) -> str:
         name, price, chg, driver = cells[0], cells[1], cells[2], cells[3]
@@ -579,7 +594,7 @@ def format_for_feishu(md: str) -> str:
         else:
             direction = "➖"
             chg_clean = chg.strip()
-        return f"- {direction} **{name}** `{price}` · {chg_clean} · {driver}"
+        return f"{direction} **{name}** `{price}` · {chg_clean} · {driver}"
 
     lines = md.split("\n")
     out: list[str] = []
