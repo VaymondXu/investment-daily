@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 import requests
 import yfinance as yf
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from openai import OpenAI
 from tavily import TavilyClient
@@ -46,17 +46,12 @@ ASSETS = [
 ]
 
 # Polymarket 过滤规则（基于 events 端点的 tags 字段）
-WHITELIST_TAGS = {
-    "Politics", "Elections", "World Elections", "Global Elections", "US Election",
-    "Geopolitics", "Foreign Policy", "World", "Middle East",
-    "Economy", "Economic Policy", "Fed", "Fed Rates", "Macro Election 1", "Macro Election 2",
-    "Finance", "Finance Updown", "Commodities", "Oil",
-    "Crypto", "Bitcoin", "Crypto Prices", "Ethereum",
-}
+# 黑名单：明确与投资无关的类别，硬过滤
 BLACKLIST_TAGS = {
     "Sports", "NBA", "NFL", "MLB", "Soccer", "Golf", "Basketball", "Games",
-    "Culture", "Music", "Awards", "Tweet Markets", "Hide From New",
+    "Culture", "Music", "Awards", "Tweet Markets",
 }
+# 投资相关性筛选由 LLM 完成（filter_and_translate_polymarket），不再使用白名单
 
 # Polymarket 中文标题最大字符数（LLM 翻译目标 ≤18，此处兜底硬上限）
 MAX_QUESTION_LEN_ZH = 22
@@ -81,8 +76,8 @@ ASSET_NEWS_QUERIES = {
 
 # ── 数据采集 ─────────────────────────────────────────────────────────────────
 
-def fetch_polymarket(top_n: int = 6) -> list[dict]:
-    """拉取 Polymarket 热门投资相关事件（按 24h 成交量排序，过滤体育/娱乐等）"""
+def fetch_polymarket(top_n: int = 20) -> list[dict]:
+    """拉取 Polymarket 热门事件候选池（按 24h 成交量排序，黑名单硬过滤体育/娱乐）"""
     CACHE_DIR.mkdir(exist_ok=True)
 
     # 加载昨日 snapshot，用于 oneDayPriceChange 为 None 时回退计算 delta
@@ -95,27 +90,43 @@ def fetch_polymarket(top_n: int = 6) -> list[dict]:
             pass
 
     url = "https://gamma-api.polymarket.com/events"
-    params = {
-        "active":    "true",
-        "closed":    "false",
-        "limit":     50,
-        "order":     "volume24hr",
-        "ascending": "false",
-    }
-    try:
-        resp = requests.get(url, params=params, timeout=15)
-        resp.raise_for_status()
-        events = resp.json()
-    except Exception as e:
-        print(f"[Polymarket] 请求失败: {e}")
+    base_params = {"active": "true", "closed": "false", "limit": 30, "ascending": "false"}
+
+    # 双维度拉取：24h 热门 + 累计热门，合并后给 LLM 更丰富的候选池
+    raw_events: list[dict] = []
+    seen_event_ids: set = set()
+    for order in ("volume24hr", "volume"):
+        try:
+            resp = requests.get(url, params={**base_params, "order": order}, timeout=15)
+            resp.raise_for_status()
+            for e in resp.json():
+                eid = e.get("id")
+                if eid and eid not in seen_event_ids:
+                    seen_event_ids.add(eid)
+                    raw_events.append(e)
+        except Exception as e:
+            print(f"[Polymarket] {order} 请求失败: {e}")
+
+    if not raw_events:
         return []
 
     result = []
     today_snapshot: dict[str, float] = {}
 
-    for event in events:
+    now_utc = datetime.now(timezone.utc)
+
+    def _is_expired(iso_str) -> bool:
+        if not iso_str:
+            return False  # 缺失日期不过滤，避免误伤
+        try:
+            dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+            return dt < now_utc
+        except Exception:
+            return False
+
+    for event in raw_events:
         markets = event.get("markets") or []
-        # 收集所有子市场的 YES 价格到 today_snapshot（不限 top_n）
+        # 收集所有子市场的 YES 价格到 today_snapshot
         for m in markets:
             mid = m.get("id")
             if not mid:
@@ -132,17 +143,20 @@ def fetch_polymarket(top_n: int = 6) -> list[dict]:
                 except Exception:
                     pass
 
-        if len(result) >= top_n:
-            continue
-
-        # 双层标签过滤：黑名单优先，再检查白名单
+        # 黑名单硬过滤（体育/娱乐/游戏等）
         tag_labels = {t.get("label", "") for t in (event.get("tags") or [])}
         if tag_labels & BLACKLIST_TAGS:
             continue
-        if not (tag_labels & WHITELIST_TAGS):
-            continue
 
         if not markets:
+            continue
+
+        # 过滤已过验证时间的事件：优先取 event.endDate，回退 market.endDate
+        event_end = event.get("endDate")
+        if not event_end:
+            market_ends = [m.get("endDate") for m in markets if m.get("endDate")]
+            event_end = max(market_ends) if market_ends else None
+        if _is_expired(event_end):
             continue
 
         # 多子市场取 24h 成交量最大的；单市场直接用第一个
@@ -161,6 +175,9 @@ def fetch_polymarket(top_n: int = 6) -> list[dict]:
             except Exception:
                 out_prices = []
         yes_price = float(out_prices[0]) if out_prices else None
+        # 过滤结果已无悬念的事件（YES ≥99% 或 ≤1%）
+        if yes_price is not None and (yes_price >= 0.99 or yes_price <= 0.01):
+            continue
         yes_pct = f"{yes_price*100:.1f}%" if yes_price is not None else "--"
 
         # 24h 价格变化：优先 API 原生字段，回退本地 snapshot 计算
@@ -177,13 +194,15 @@ def fetch_polymarket(top_n: int = 6) -> list[dict]:
             else:
                 chg_24h = "--"
 
-        vol = market.get("volume24hr") or 0
+        vol_24h   = float(market.get("volume24hr") or 0)
+        vol_total = sum(float(m.get("volume") or 0) for m in markets)
         result.append({
-            "question_en": question_en,   # 原始英文，供翻译和调试
-            "question_zh": question_en,   # 占位，由 translate_polymarket_titles() 填充
+            "question_en": question_en,
+            "question_zh": question_en,   # 占位，由 filter_and_translate_polymarket() 填充
             "yes":         yes_pct,
             "chg_24h":     chg_24h,
-            "volume_24h":  f"${float(vol):,.0f}" if vol else "N/A",
+            "volume_24h":  f"${vol_24h:,.0f}" if vol_24h else "N/A",
+            "volume_total": f"${vol_total:,.0f}" if vol_total else "N/A",
         })
 
     # 写入今日 snapshot，供明日回退使用
@@ -196,27 +215,50 @@ def fetch_polymarket(top_n: int = 6) -> list[dict]:
     return result
 
 
-def translate_polymarket_titles(items: list[dict]) -> list[dict]:
-    """批量将 Polymarket 英文标题翻译并精简为中文（≤18 字），更新 question_zh 字段"""
+def filter_and_translate_polymarket(items: list[dict], top_n: int = 6) -> list[dict]:
+    """LLM 从候选事件中筛选最具投资价值的 top_n 条，并翻译为中文"""
     if not items:
         return items
 
-    titles = [it["question_en"] for it in items]
-    titles_json = json.dumps(titles, ensure_ascii=False)
+    # 构建候选列表：编号 + 英文标题 + 成交量，供 LLM 筛选
+    candidates = []
+    for i, it in enumerate(items):
+        candidates.append({
+            "id":           i,
+            "title":        it["question_en"],
+            "volume_24h":   it.get("volume_24h", "N/A"),
+            "volume_total": it.get("volume_total", "N/A"),
+        })
+    candidates_json = json.dumps(candidates, ensure_ascii=False)
 
     client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
-    prompt = f"""以下是 Polymarket 预测市场事件标题列表（JSON 数组）。
-请将每条标题翻译并精简成中文，要求：
-1. 目标长度 ≤18 个中文字符（含标点）
-2. 必须保留核心实体：人名、组织名、数字阈值、日期、选项方向
-3. 多选项事件（含"—"分隔子选项）必须保留子选项信息
-4. 无法确定语义时返回空字符串""
+    prompt = f"""以下是 Polymarket 预测市场的候选事件列表（JSON 数组，含编号、英文标题、24h成交量、累计成交量）。
 
-输入标题数组：
-{titles_json}
+请完成两步任务：
 
-请以 JSON 对象返回，key 为原始英文标题，value 为对应中文精简版：
-{{"原始标题1": "中文版1", "原始标题2": "中文版2", ...}}"""
+**第一步：筛选**
+从中挑选最多 {top_n} 条与全球投资、宏观经济、金融市场最相关的事件。
+筛选标准：
+- 优先选择：美联储/央行政策、地缘冲突（影响油价/供应链）、大国选举（美国/欧洲主要国家）、加密货币、大宗商品价格、重大贸易政策
+- 过滤掉：小国/边缘国选举（如匈牙利、秘鲁等）、纯政治人事任命、与金融市场无直接关联的事件
+- 过滤掉：兑现时间过远（如2028年大选）且对近期市场走势无直接影响的事件
+- 边界情况：如果事件可能间接影响市场（如欧盟政策变动），可以保留
+- 多样性：同一主题（如比特币价格、美国大选）最多选 1 条最具代表性的，确保最终结果覆盖不同资产类别或地缘板块
+- 参考成交量：volume_total 大的事件代表市场长期关注度高，volume_24h 大的代表近期活跃，两者都可作为重要性参考
+
+**第二步：翻译**
+将选中事件的标题翻译并精简为中文：
+- 目标长度 ≤18 个中文字符（含标点）
+- 必须保留核心实体：人名、组织名、数字阈值、日期、选项方向
+- 多选项事件（含"—"分隔子选项）必须保留子选项信息
+
+候选事件：
+{candidates_json}
+
+请以 JSON 对象返回，格式：
+{{"selected": [{{"id": 0, "zh": "中文标题"}}, {{"id": 3, "zh": "中文标题"}}, ...]}}
+
+selected 数组长度不超过 {top_n}，按投资相关性从高到低排列。"""
 
     try:
         resp = client.chat.completions.create(
@@ -224,24 +266,42 @@ def translate_polymarket_titles(items: list[dict]) -> list[dict]:
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             temperature=0.1,
-            max_tokens=500,
+            max_tokens=800,
         )
-        mapping: dict = json.loads(resp.choices[0].message.content)
+        result = json.loads(resp.choices[0].message.content)
+        selected = result.get("selected", [])
     except Exception as e:
-        print(f"[翻译] Polymarket 标题翻译失败，回退英文: {e}")
-        mapping = {}
-
-    for it in items:
-        zh = mapping.get(it["question_en"], "")
-        if zh:
-            # 兜底硬上限
-            it["question_zh"] = zh[:MAX_QUESTION_LEN_ZH]
-        else:
-            # 英文回退：软截断
+        print(f"[LLM筛选] 筛选+翻译失败，回退前{top_n}条: {e}")
+        # 回退：直接取前 top_n 条，英文标题截断
+        for it in items[:top_n]:
             en = it["question_en"]
             it["question_zh"] = en if len(en) <= MAX_QUESTION_LEN_EN else en[:MAX_QUESTION_LEN_EN] + "…"
+        return items[:top_n]
 
-    return items
+    # 按 LLM 返回的顺序组装结果
+    filtered = []
+    for s in selected:
+        idx = s.get("id")
+        zh = s.get("zh", "")
+        if idx is None or idx < 0 or idx >= len(items):
+            continue
+        it = items[idx]
+        if zh:
+            it["question_zh"] = zh[:MAX_QUESTION_LEN_ZH]
+        else:
+            en = it["question_en"]
+            it["question_zh"] = en if len(en) <= MAX_QUESTION_LEN_EN else en[:MAX_QUESTION_LEN_EN] + "…"
+        filtered.append(it)
+
+    if not filtered:
+        # LLM 返回异常，回退前 top_n
+        print("[LLM筛选] 返回为空，回退前几条")
+        for it in items[:top_n]:
+            en = it["question_en"]
+            it["question_zh"] = en if len(en) <= MAX_QUESTION_LEN_EN else en[:MAX_QUESTION_LEN_EN] + "…"
+        return items[:top_n]
+
+    return filtered
 
 
 def fetch_assets() -> list[dict]:
@@ -613,11 +673,11 @@ def main():
     print(f"[{TODAY}] 开始生成投资日报...{'（本地模式，跳过飞书推送）' if local_mode else ''}")
     CACHE_DIR.mkdir(exist_ok=True)
 
-    print("  1/5 拉取 Polymarket 数据...")
+    print("  1/5 拉取 Polymarket 候选事件...")
     polymarket = fetch_polymarket()
 
-    print("  2/5 翻译 Polymarket 标题为中文...")
-    polymarket = translate_polymarket_titles(polymarket)
+    print("  2/5 LLM 筛选投资相关事件 + 翻译...")
+    polymarket = filter_and_translate_polymarket(polymarket)
 
     print("  3/5 拉取大类资产行情...")
     assets = fetch_assets()
