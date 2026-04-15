@@ -6,7 +6,7 @@
 
 - **Polymarket 热门押注**：黑名单硬过滤体育/娱乐，LLM 智能筛选最具投资价值的 6 条事件（自动去重、过滤噪音），展示 YES 概率及 24h 变化
 - **大类资产行情**：11 项资产（美股/中国股市/商品/债券/加密），含 AI 推断的涨跌驱动因素
-- **市场舆情**：Tavily 实时新闻，按板块分类
+- **市场舆情**：Gemini 2.5 Flash + Google Search 实时新闻，按板块分类
 - **AI 综合研判**：核心观点、潜在风险、可执行交易线索
 - **飞书优化渲染**：推送前自动将 Markdown 表格转换为 emoji 装饰的列表（飞书不支持 GFM 表格），本地 `.md` 文件仍保留原始表格格式
 
@@ -16,7 +16,7 @@
 |------|------|
 | Polymarket 押注 | [Polymarket Events API](https://gamma-api.polymarket.com/events)（免费，无需 key） |
 | 大类资产行情 | yfinance |
-| 新闻舆情 | Tavily Search API |
+| 新闻舆情 | Gemini 2.5 Flash + Google Search Grounding |
 | 报告生成 | DeepSeek API |
 
 ## 资产覆盖
@@ -25,7 +25,7 @@
 
 ## 触发方式
 
-- **定时**：每日北京时间 09:23 自动运行（GitHub Actions cron，避开整点拥堵）
+- **定时**：每日北京时间 16:09 自动运行（GitHub Actions cron，避开整点拥堵）
 - **手动**：仓库 Actions 页面 → `Run workflow`
 
 ## 配置
@@ -35,7 +35,7 @@
 | Secret | 说明 |
 |--------|------|
 | `DEEPSEEK_API_KEY` | DeepSeek API Key |
-| `TAVILY_API_KEY` | Tavily API Key |
+| `GEMINI_API_KEY` | Google AI Studio API Key（[免费申请](https://aistudio.google.com/apikey)） |
 | `FEISHU_WEBHOOK_URL` | 飞书自定义机器人 Webhook URL |
 
 ### 飞书机器人配置
@@ -54,7 +54,7 @@ pip install -r requirements.txt
 
 ```
 DEEPSEEK_API_KEY=your_key
-TAVILY_API_KEY=your_key
+GEMINI_API_KEY=your_key
 FEISHU_WEBHOOK_URL=your_webhook_url   # 不填则跳过推送，仅生成本地文件
 ```
 
@@ -69,6 +69,12 @@ python3 daily_report.py
 ---
 
 ## 更新记录
+
+### v6（2026-04-15）
+- **信息检索层重构**：Tavily → Gemini 2.5 Flash + Google Search Grounding，免费且 Google 索引覆盖更全
+- **3 次批量调用**：宏观舆情（1 次）+ 股指类（1 次）+ 商品/债/汇/币类（1 次），替代原来 15 次并发调用，在免费层 5 RPM 限制内稳定运行
+- **过滤机制升级**：从 Tavily 关键词规避（避免抓到个股/IPO/加密噪音）改为 Gemini prompt 自然语言指令，更可靠
+- **环境变量**：`TAVILY_API_KEY` → `GEMINI_API_KEY`
 
 ### v5（2026-04-13）
 - **定时调整**：cron 改为 UTC 01:23（北京 09:23），缓解 GitHub Actions 00:xx 时段队列拥堵导致的延迟到账问题
