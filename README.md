@@ -17,7 +17,7 @@
 | Polymarket 押注 | [Polymarket Events API](https://gamma-api.polymarket.com/events)（免费，无需 key） |
 | 大类资产行情 | yfinance |
 | 新闻舆情 | Gemini 2.5 Flash + Google Search Grounding |
-| 报告生成 | DeepSeek API |
+| 报告生成 | DeepSeek V4 API（Flash + Pro） |
 
 ## 资产覆盖
 
@@ -69,6 +69,10 @@ python3 daily_report.py
 ---
 
 ## 更新记录
+
+### v9（2026-04-30）
+- **DeepSeek V4 迁移**：`deepseek-chat` → DeepSeek V4 双模型策略；报告生成切换至 `deepseek-v4-pro`（更强推理与世界知识），Polymarket 解读/筛选保留 `deepseek-v4-flash`（轻量快速）
+- **必要性**：`deepseek-chat` 将于 2026-07-24 下线，提前迁移至官方新模型 ID
 
 ### v8（2026-04-18）
 - **经济日历**：新增「五、经济日历」独立报告栏目，拉取未来 5 日高影响力宏观事件（中/美/欧/英/日/中国），每条附 LLM 推导的潜在市场影响（如"若数据超预期可能影响全球利率预期"）

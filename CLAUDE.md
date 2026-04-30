@@ -46,7 +46,8 @@ Gemini 2.5 Flash + Google Search Grounding
 
 build_data_block()                 # 拼接结构化文本，注入休市提示（如适用）
 
-generate_report()                  # DeepSeek API（OpenAI SDK + base_url 覆盖），SYSTEM_PROMPT + REPORT_PROMPT
+generate_report()                  # DeepSeek V4 API（OpenAI SDK + base_url 覆盖），SYSTEM_PROMPT + REPORT_PROMPT
+                                   # 报告生成用 deepseek-v4-pro，Polymarket 解读/筛选用 deepseek-v4-flash
 
 format_for_feishu()                # 飞书格式转换（表格 → bullet list）
 
@@ -174,7 +175,7 @@ is_market_closed = (latest_data_date != TODAY) if latest_data_date else False
 
 | 变量 | 必填 | 说明 |
 |------|------|------|
-| `DEEPSEEK_API_KEY` | 是 | 用于 LLM 筛选 + 报告生成 |
+| `DEEPSEEK_API_KEY` | 是 | 用于 LLM 筛选（deepseek-v4-flash）+ 报告生成（deepseek-v4-pro） |
 | `GEMINI_API_KEY` | 是 | 新闻检索（Gemini 2.5 Flash + Google Search Grounding） |
 | `FEISHU_WEBHOOK_URL` | 否 | 不填则跳过推送，仅生成本地 `.md` 文件 |
 

@@ -256,7 +256,7 @@ def interpret_polymarket(items: list[dict]) -> str:
 
     try:
         resp = client.chat.completions.create(
-            model="deepseek-chat",
+            model="deepseek-v4-flash",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
             max_tokens=500,
@@ -369,7 +369,7 @@ consensus 组最多 3 条，按 volume_24h 从大到小排列；若无极端共�
     for attempt in range(2):
         try:
             resp = client.chat.completions.create(
-                model="deepseek-chat",
+                model="deepseek-v4-flash",
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
                 temperature=0.1,
@@ -967,7 +967,7 @@ def generate_report(data_block: str, is_market_closed: bool = False) -> str:
     for attempt in range(2):
         try:
             resp = client.chat.completions.create(
-                model="deepseek-chat",
+                model="deepseek-v4-pro",
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user",   "content": prompt},
