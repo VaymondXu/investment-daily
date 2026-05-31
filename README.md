@@ -17,7 +17,7 @@
 | Polymarket 押注 | [Polymarket Events API](https://gamma-api.polymarket.com/events)（免费，无需 key） |
 | 大类资产行情 | yfinance |
 | 新闻舆情 | Gemini 2.5 Flash + Google Search Grounding |
-| 报告生成 | DeepSeek V4 API（Flash + Pro） |
+| 报告生成 | DeepSeek V4 Pro（报告）+ DeepSeek Chat V3（筛选/解读） |
 
 ## 资产覆盖
 
@@ -25,7 +25,7 @@
 
 ## 触发方式
 
-- **定时**：每日北京时间 16:09 自动运行（GitHub Actions cron，避开整点拥堵）
+- **定时**：每日北京时间 06:09 自动运行（GitHub Actions cron，A 股开盘前约 20 分钟，工作日）
 - **手动**：仓库 Actions 页面 → `Run workflow`
 
 ## 配置
@@ -69,6 +69,13 @@ python3 daily_report.py
 ---
 
 ## 更新记录
+
+### v10（2026-05-31）
+- **推送时间前移**：16:09 → 06:09（北京），A 股开盘（09:30）前约 20 分钟推送，提供开盘前策略参考
+- **早盘前模式**：北京 06-10 点运行时自动切换，数据块提示从「⚠️ 休市」变为「📋 早盘前快报」，重点引导分析昨夜美股/欧盘对今日开盘的影响，报告类型改为「早盘前参考 (Pre-Market Brief)」
+- **Polymarket 筛选稳定性修复**：`deepseek-v4-flash/pro` 均为推理模型，思维链消耗 `max_tokens` 导致 `content` 为空；筛选/解读改用 `deepseek-chat`（V3 非推理），恢复 `response_format=json_object`；LLM 失败 fallback 从 `(fallback, [], [])` 改为 `(fallback, list(fallback), [])`，长期关注不再整节消失
+- **铝期货换月检测**：`ALI=F` 流动性极低，换月时出现虚假大幅跳空；新增检测逻辑（`>9%` 且成交量 `<500`），自动标注 `⚠️ (存疑)` 避免误导
+- **经济日历中文化**：REPORT_PROMPT 明确指令将英文事件名翻译为中文，附常见示例
 
 ### v9（2026-04-30）
 - **DeepSeek V4 迁移**：`deepseek-chat` → DeepSeek V4 双模型策略；报告生成切换至 `deepseek-v4-pro`（更强推理与世界知识），Polymarket 解读/筛选保留 `deepseek-v4-flash`（轻量快速）
