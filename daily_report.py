@@ -256,10 +256,10 @@ def interpret_polymarket(items: list[dict]) -> str:
 
     try:
         resp = client.chat.completions.create(
-            model="deepseek-chat",
+            model="deepseek-v4-flash",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
-            max_tokens=500,
+            max_tokens=2000,  # V4 推理模型：reasoning 约耗 1000+ token，需留足 content 预算
         )
         return (resp.choices[0].message.content or "").strip()
     except Exception as exc:
@@ -369,13 +369,15 @@ consensus 组最多 3 条，按 volume_24h 从大到小排列；若无极端共�
     for attempt in range(2):
         try:
             resp = client.chat.completions.create(
-                model="deepseek-chat",
+                model="deepseek-v4-flash",
                 messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
                 temperature=0.1,
-                max_tokens=1500,
+                max_tokens=6000,  # V4 推理模型：reasoning 约耗 1000-2000 token，content JSON 约 500-1000 token
             )
-            result_raw = json.loads(resp.choices[0].message.content)
+            raw_text = resp.choices[0].message.content or ""
+            m = re.search(r"```json\s*([\s\S]*?)```", raw_text)
+            json_str = m.group(1).strip() if m else raw_text.strip()
+            result_raw = json.loads(json_str)
             last_exc = None
             break
         except Exception as exc:

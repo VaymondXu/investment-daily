@@ -47,9 +47,9 @@ Gemini 2.5 Flash + Google Search Grounding
 build_data_block()                 # 拼接结构化文本，注入休市提示（如适用）
 
 generate_report()                  # DeepSeek V4 API（OpenAI SDK + base_url 覆盖），SYSTEM_PROMPT + REPORT_PROMPT
-                                   # 报告生成用 deepseek-v4-pro，Polymarket 解读/筛选用 deepseek-chat（V3）
-                                   # 注意：deepseek-v4-flash/pro 均为推理模型，思维链消耗 max_tokens 导致 content 为空
-                                   # filter+interpret 必须用非推理模型（deepseek-chat），避免 JSON 输出失败
+                                   # 报告生成用 deepseek-v4-pro，Polymarket 解读/筛选用 deepseek-v4-flash
+                                   # ⚠️ V4 系列均为推理模型：reasoning_content 先消耗 max_tokens，剩余才写入 content
+                                   # filter 调用设 max_tokens=6000，interpret 设 max_tokens=2000，为 reasoning 留足预算
 
 format_for_feishu()                # 飞书格式转换（表格 → bullet list）
 
@@ -182,7 +182,7 @@ is_market_closed = (latest_data_date != TODAY) if latest_data_date else False
 
 | 变量 | 必填 | 说明 |
 |------|------|------|
-| `DEEPSEEK_API_KEY` | 是 | 用于 LLM 筛选/解读（deepseek-chat V3）+ 报告生成（deepseek-v4-pro） |
+| `DEEPSEEK_API_KEY` | 是 | 用于 LLM 筛选/解读（deepseek-v4-flash）+ 报告生成（deepseek-v4-pro） |
 | `GEMINI_API_KEY` | 是 | 新闻检索（Gemini 2.5 Flash + Google Search Grounding） |
 | `FEISHU_WEBHOOK_URL` | 否 | 不填则跳过推送，仅生成本地 `.md` 文件 |
 
@@ -212,6 +212,6 @@ is_market_closed = (latest_data_date != TODAY) if latest_data_date else False
 6. **`fetch_polymarket()` 和 `filter_and_translate_polymarket()` 返回元组**（v7 起）：前者返回 `(result, consensus_candidates)`，后者返回 `(list_24h, list_total, list_consensus)`。调用处须正确解包，否则 `len()` 会返回元组长度（2或3）而非事件数量。
 7. **`tag` 字段可能为空字符串**：`build_data_block()` 已用 `m.get("tag")` 判空后才追加 `〔tag〕`，不会出现 `〔〕` 空标签。
 8. **经济日历跨日缓存**：`fetch_economic_calendar()` 写入当日缓存前先做跨日合并（向前 7 天历史文件），捞取其中仍为未来日期的事件行。合并逻辑依赖行首 `YYYY-MM-DD` 格式做去重和过滤，Gemini prompt 若返回非标准格式行会被静默丢弃。
-9. **DeepSeek V4 系列（flash/pro）是推理模型**：`reasoning_content` 先消耗 `max_tokens`，当 prompt 较长时 `content` 可能为空（`finish_reason: length`）。`filter_and_translate_polymarket` 和 `interpret_polymarket` 必须使用非推理模型（`deepseek-chat`），否则 `json.loads("")` 必然抛出 `JSONDecodeError`。
+9. **DeepSeek V4 系列（flash/pro）是推理模型**：`reasoning_content` 先消耗 `max_tokens`，当 prompt 较长且 `max_tokens` 不足时 `content` 为空（`finish_reason: length`）。解法是给 V4 调用留足预算：filter 用 `max_tokens=6000`，interpret 用 `max_tokens=2000`，不得缩减，否则 `json.loads("")` 必然报错。
 10. **ALI=F（铝期货）流动性极低**：日均成交量仅数百手，期货换月时会出现虚假大幅变动（>10%），与真实行情无关。代码已加检测：`abs(chg_pct) > 9` 且 `Volume < 500` 时标注 `⚠️ (存疑)`。yfinance 内无更优铝期货替代 ticker，如需可靠数据需接入其他数据源（如 LME、Wind）。
 11. **早盘前模式**（北京 06-10 点）：此时 A 股/港股尚未开盘，`is_market_closed` 必然为 True，但与周末/节假日语义不同。`is_morning` 标志用于区分二者，改动 `build_data_block` 或 `generate_report` 时须同时处理两种路径。

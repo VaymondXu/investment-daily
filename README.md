@@ -17,7 +17,7 @@
 | Polymarket 押注 | [Polymarket Events API](https://gamma-api.polymarket.com/events)（免费，无需 key） |
 | 大类资产行情 | yfinance |
 | 新闻舆情 | Gemini 2.5 Flash + Google Search Grounding |
-| 报告生成 | DeepSeek V4 Pro（报告）+ DeepSeek Chat V3（筛选/解读） |
+| 报告生成 | DeepSeek V4 Pro（报告）+ DeepSeek V4 Flash（筛选/解读） |
 
 ## 资产覆盖
 
